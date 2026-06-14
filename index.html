@@ -5164,7 +5164,7 @@
             },
 
             // Decide a qual conta local a identidade Google está vinculada,
-            // entra no app sob ela e sincroniza com a nuvem.
+            // entra no app sob ela e sincroniza (por usuário, comprimido).
             async _resolveAndEnter(user) {
                 const { db, doc, getDoc } = window._firebase;
                 let remote = null;
@@ -5173,39 +5173,36 @@
                     if (snap.exists()) remote = snap.data();
                 } catch (e) { console.error(e); }
 
-                // ── Conta já sincronizada (qualquer aparelho) ──
-                if (remote && remote.linkedUser && remote.payload) {
-                    const username = remote.linkedUser;
-                    try { await DB.importAllData(JSON.parse(remote.payload)); }
-                    catch (e) { console.error('Falha ao importar dados da nuvem:', e); }
-                    this._linkedUser = username;
-                    localStorage.setItem('fp_fb_link_' + user.uid, username);
-                    localStorage.setItem('fp_fb_stamp', remote.updatedAt || new Date().toISOString());
-
-                    let local = await DB.getUser(username).catch(() => null)
-                        || { username, name: user.displayName || username };
-                    this._localUser = local; Auth.currentUser = local;
-                    await Auth.enterApp(local);
-                    this.setStatus('on', 'Sincronizado');
-                    return;
+                // Lê (e descomprime) o que houver na nuvem
+                let cloudDump = null, cloudCount = 0;
+                if (remote && remote.payload) {
+                    try {
+                        const json = remote.enc === 'gzip' ? await this._gunzip(remote.payload) : remote.payload;
+                        cloudDump = JSON.parse(json);
+                        // Só confiamos no formato novo (com escopo). Documentos antigos são descartados em favor do local.
+                        if (!cloudDump || cloudDump.version !== 'fp-scoped-1') { cloudDump = null; cloudCount = 0; }
+                        else cloudCount = this._countTxDump(cloudDump, remote.linkedUser || cloudDump.scopedUser || '');
+                    } catch (e) { console.error('Falha ao ler nuvem:', e); cloudDump = null; cloudCount = 0; }
                 }
 
-                // ── Primeira vez (ou documento antigo/vazio sem vínculo) ──
-                // Descobre a qual conta local vincular.
-                let username = localStorage.getItem('fp_fb_link_' + user.uid) || null;
-                if (!username || !(await DB.getUser(username).catch(() => null))) {
-                    username = null;
-                    const users = (await DB.getAllUsers().catch(() => [])) || [];
-                    const candidates = users.filter(u => u && u.username && !u.google);
-                    if (candidates.length === 1) {
-                        username = candidates[0].username;
-                        if (window.Utils && Utils.toast) Utils.toast('🔗 Conta Google vinculada a "' + (candidates[0].name || username) + '"');
-                    } else if (candidates.length > 1) {
-                        username = await this._chooseLinkAccount(candidates);
+                // Conta local que mais tem dados (resgata seu backup importado)
+                const best = await this._bestLocalAccount();
+
+                // Escolhe o usuário de trabalho
+                let username = null;
+                if (remote && remote.linkedUser && cloudCount > 0) {
+                    username = remote.linkedUser;               // nuvem com dados manda
+                } else if (best.user && best.count > 0) {
+                    username = best.user.username;              // conta local com dados
+                } else {
+                    username = (remote && remote.linkedUser) || (best.user && best.user.username) || null;
+                    if (!username) {
+                        const users = (await DB.getAllUsers().catch(() => [])) || [];
+                        const cands = users.filter(u => u && u.username && !u.google);
+                        if (cands.length === 1) username = cands[0].username;
+                        else if (cands.length > 1) username = await this._chooseLinkAccount(cands);
                     }
                 }
-
-                // Nenhuma conta local escolhida → cria uma conta nova vazia
                 if (!username) {
                     username = this._usernameFor(user);
                     const rec = { username, name: user.displayName || user.email || 'Conta Google', passwordHash: '', google: true, createdAt: new Date().toISOString() };
@@ -5220,9 +5217,23 @@
                 this._localUser = local; Auth.currentUser = local;
                 await Auth.enterApp(local);
 
-                // Envia os dados locais (agora vinculados) para a nuvem
-                await this._pushNow();
-                this.setStatus('on', 'Sincronizado');
+                const localCount = await this._localTxCount(username);
+                const localStamp = localStorage.getItem('fp_fb_stamp') || '';
+                const cloudNewer = remote && remote.updatedAt && remote.updatedAt > localStamp;
+
+                if (cloudDump && cloudCount > 0 && (localCount === 0 || (cloudNewer && cloudCount >= localCount))) {
+                    // Nuvem é a fonte de verdade → baixa
+                    await this._scopedImport(cloudDump);
+                    localStorage.setItem('fp_fb_stamp', remote.updatedAt || new Date().toISOString());
+                    await this._refreshApp();
+                    this.setStatus('on', 'Sincronizado');
+                    if (window.Utils && Utils.toast) Utils.toast('☁️ Dados carregados da nuvem');
+                } else {
+                    // Local é a fonte de verdade → envia (corrige nuvem vazia/antiga)
+                    await this._pushNow();
+                    if (best.user && window.Utils && Utils.toast && cloudCount === 0)
+                        Utils.toast('🔗 Conta Google vinculada a "' + (local.name || username) + '" e enviada à nuvem');
+                }
             },
 
             // Modal simples para escolher a conta local ao vincular o Google
@@ -5277,14 +5288,16 @@
                 if (!remote || !remote.payload) return;
                 this._applying = true;
                 try {
-                    const dump = JSON.parse(remote.payload);
-                    await DB.importAllData(dump);
-                    if (remote.linkedUser) {
-                        this._linkedUser = remote.linkedUser;
-                        const lu = await DB.getUser(remote.linkedUser).catch(() => null) || { username: remote.linkedUser, name: remote.linkedUser };
+                    const json = remote.enc === 'gzip' ? await this._gunzip(remote.payload) : remote.payload;
+                    const dump = JSON.parse(json);
+                    const username = remote.linkedUser || (dump && dump.scopedUser) || (this._localUser && this._localUser.username);
+                    if (username) {
+                        this._linkedUser = username;
+                        const lu = await DB.getUser(username).catch(() => null) || { username, name: username };
                         this._localUser = lu; Auth.currentUser = lu;
-                        if (this.user) localStorage.setItem('fp_fb_link_' + this.user.uid, remote.linkedUser);
+                        if (this.user) localStorage.setItem('fp_fb_link_' + this.user.uid, username);
                     }
+                    await this._scopedImport(dump);
                     localStorage.setItem('fp_fb_stamp', remote.updatedAt || new Date().toISOString());
                     await this._refreshApp();
                 } catch (e) {
@@ -5319,25 +5332,127 @@
             async _pushNow() {
                 if (!window._fbUser || !window._firebase) return;
                 const { db, doc, setDoc } = window._firebase;
+                const username = this._linkedUser || (this._localUser && this._localUser.username);
+                if (!username) return;
                 this.setStatus('syncing', 'Salvando…');
                 try {
-                    const dump = await DB.exportAllData();
-                    const payload = JSON.stringify(dump);
+                    const json = JSON.stringify(await this._scopedExport(username));
+                    let payload = json, enc = 'plain';
+                    try { const gz = await this._gzip(json); if (gz) { payload = gz; enc = 'gzip'; } } catch (e) {}
                     if (payload.length > 1000000) {
                         this.setStatus('err', 'Dados > 1 MB');
-                        if (window.Utils && Utils.toast) Utils.toast('⚠️ Seus dados excederam o limite de 1 MB do Firestore; a nuvem não foi atualizada.');
+                        if (window.Utils && Utils.toast) Utils.toast('⚠️ Mesmo compactados, seus dados passaram de 1 MB. A nuvem não foi atualizada.');
                         return;
                     }
                     const stamp = new Date().toISOString();
                     this._lastPush = stamp;
-                    const linkedUser = this._linkedUser || (this._localUser && this._localUser.username) || null;
-                    await setDoc(doc(db, 'usuarios', this.user.uid), { updatedAt: stamp, size: payload.length, app: 'FinancaPro', linkedUser, payload });
+                    await setDoc(doc(db, 'usuarios', this.user.uid), { updatedAt: stamp, linkedUser: username, enc, size: payload.length, app: 'FinancaPro', payload });
                     localStorage.setItem('fp_fb_stamp', stamp);
                     this.setStatus('on', 'Salvo ✓');
                 } catch (e) {
                     console.error(e);
                     this.setStatus('err', 'Erro ao salvar');
                 }
+            },
+
+            // ── Export/Import com escopo apenas no usuário vinculado ──
+            async _scopedExport(username) {
+                const dump = { version: 'fp-scoped-1', exportDate: new Date().toISOString(), scopedUser: username, userRecord: null, databases: {}, localStorage: {} };
+                try { dump.userRecord = await DB.getUser(username); } catch (e) {}
+                const names = ['FinancaProDB_' + username];
+                try {
+                    const perfis = JSON.parse(localStorage.getItem('fp_perfis_' + username) || '[]');
+                    perfis.forEach(p => { if (p && p.id) names.push('FinancaProDB_' + username + '_empresa_' + p.id); });
+                } catch (e) {}
+                for (const n of names) { try { const d = await DB._dumpDatabase(n); if (d) dump.databases[n] = d; } catch (e) {} }
+                const suf = '_' + username;
+                for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    if (!k || k.indexOf('fp_') !== 0) continue;
+                    if (k === 'fp_fb_stamp' || k.indexOf('fp_fb_link_') === 0) continue;
+                    if (k === 'fp_dark_mode' || k === 'fp_saldos_ocultos' || k.endsWith(suf)) {
+                        dump.localStorage[k] = localStorage.getItem(k);
+                    }
+                }
+                return dump;
+            },
+
+            async _scopedImport(dump) {
+                if (!dump) return;
+                if (dump.userRecord) { try { await DB.saveUser(dump.userRecord); } catch (e) {} }
+                if (dump.databases) {
+                    for (const [n, dd] of Object.entries(dump.databases)) {
+                        if (!n || n.indexOf('FinancaProDB') !== 0) continue;
+                        try { await DB._restoreDatabase(n, dd); } catch (e) { console.warn('restore', n, e); }
+                    }
+                }
+                if (dump.localStorage) {
+                    for (const [k, v] of Object.entries(dump.localStorage)) {
+                        if (v != null) { try { localStorage.setItem(k, v); } catch (e) {} }
+                    }
+                }
+            },
+
+            _countTxDump(dump, username) {
+                if (!dump || !dump.databases) return 0;
+                let n = 0;
+                for (const [name, dd] of Object.entries(dump.databases)) {
+                    if (name === 'FinancaProDB_' + username || name.indexOf('FinancaProDB_' + username + '_empresa_') === 0) {
+                        const t = dd && dd.stores && dd.stores.transactions;
+                        if (Array.isArray(t)) n += t.length;
+                    } else {
+                        const t = dd && dd.stores && dd.stores.transactions; // fallback: conta qualquer
+                        if (Array.isArray(t)) n += t.length;
+                    }
+                }
+                return n;
+            },
+
+            async _localTxCount(username) {
+                let n = 0;
+                try { const d = await DB._dumpDatabase('FinancaProDB_' + username); n += ((d && d.stores && d.stores.transactions) || []).length; } catch (e) {}
+                try {
+                    const perfis = JSON.parse(localStorage.getItem('fp_perfis_' + username) || '[]');
+                    for (const p of perfis) { try { const dd = await DB._dumpDatabase('FinancaProDB_' + username + '_empresa_' + p.id); n += ((dd && dd.stores && dd.stores.transactions) || []).length; } catch (e) {} }
+                } catch (e) {}
+                return n;
+            },
+
+            async _bestLocalAccount() {
+                const users = (await DB.getAllUsers().catch(() => [])) || [];
+                let best = null, bestN = -1;
+                for (const u of users) {
+                    if (!u || !u.username) continue;
+                    const n = await this._localTxCount(u.username);
+                    if (n > bestN) { bestN = n; best = u; }
+                }
+                return { user: best, count: bestN < 0 ? 0 : bestN };
+            },
+
+            // ── Compressão (gzip) para caber no limite do Firestore ──
+            _ab2b64(buf) {
+                const b = new Uint8Array(buf); let bin = ''; const CH = 0x8000;
+                for (let i = 0; i < b.length; i += CH) bin += String.fromCharCode.apply(null, b.subarray(i, i + CH));
+                return btoa(bin);
+            },
+            _b642u8(b64) {
+                const bin = atob(b64); const len = bin.length; const u = new Uint8Array(len);
+                for (let i = 0; i < len; i++) u[i] = bin.charCodeAt(i);
+                return u;
+            },
+            async _gzip(str) {
+                if (typeof CompressionStream === 'undefined') return null;
+                const cs = new CompressionStream('gzip');
+                const stream = new Blob([str]).stream().pipeThrough(cs);
+                const buf = await new Response(stream).arrayBuffer();
+                return this._ab2b64(buf);
+            },
+            async _gunzip(b64) {
+                if (typeof DecompressionStream === 'undefined') throw new Error('DecompressionStream indisponível');
+                const u = this._b642u8(b64);
+                const ds = new DecompressionStream('gzip');
+                const stream = new Blob([u]).stream().pipeThrough(ds);
+                return await new Response(stream).text();
             },
 
             _showPill(show) {
