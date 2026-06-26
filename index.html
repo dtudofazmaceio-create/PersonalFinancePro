@@ -18,35 +18,39 @@
     <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
-    <!-- ===== Firebase SDK v12.14.0 (Login Google + Firestore em nuvem) ===== -->
-    <script type="module">
-      import { initializeApp } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js";
-      import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
-        from "https://www.gstatic.com/firebasejs/12.14.0/firebase-auth.js";
-      import { getFirestore, doc, setDoc, getDoc, onSnapshot }
-        from "https://www.gstatic.com/firebasejs/12.14.0/firebase-firestore.js";
-
-      const firebaseConfig = {
-        apiKey:            "AIzaSyBjSfGyxXn-_xA_Lz49DFrvEZnbht93Gu0",
-        authDomain:        "personalfinancepro-3e880.firebaseapp.com",
-        projectId:         "personalfinancepro-3e880",
-        storageBucket:     "personalfinancepro-3e880.firebasestorage.app",
-        messagingSenderId: "128370945698",
-        appId:             "1:128370945698:web:6c6cfd29e054715666f1fb",
-        measurementId:     "G-TLZS19KDFJ"
-      };
-
-      try {
-        const firebaseApp = initializeApp(firebaseConfig);
-        const auth = getAuth(firebaseApp);
-        const db   = getFirestore(firebaseApp);
-        const provider = new GoogleAuthProvider();
-        window._firebase = { auth, db, provider, signInWithPopup, signOut,
-                             onAuthStateChanged, doc, setDoc, getDoc, onSnapshot };
-        document.dispatchEvent(new Event('firebase-ready'));
-      } catch (e) {
-        console.error('Falha ao iniciar Firebase:', e);
-      }
+    <!-- ===== Firebase (sincronização em nuvem em tempo real) ===== -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+    <script>
+    (function () {
+        // Configuração do projeto Firebase (Firestore em nuvem)
+        var firebaseConfig = {
+            apiKey: "AIzaSyBjSfGyxXn-_xA_Lz49DFrvEZnbht93Gu0",
+            authDomain: "personalfinancepro-3e880.firebaseapp.com",
+            projectId: "personalfinancepro-3e880",
+            storageBucket: "personalfinancepro-3e880.firebasestorage.app",
+            messagingSenderId: "128370945698",
+            appId: "1:128370945698:web:6c6cfd29e054715666f1fb",
+            measurementId: "G-TLZS19KDFJ"
+        };
+        try {
+            if (window.firebase && typeof firebase.initializeApp === 'function') {
+                if (!firebase.apps || !firebase.apps.length) firebase.initializeApp(firebaseConfig);
+                window.__FB = {
+                    app: true,
+                    db: (firebase.firestore ? firebase.firestore() : null),
+                    auth: (firebase.auth ? firebase.auth() : null)
+                };
+            } else {
+                window.__FB = { app: false, db: null, auth: null };
+                console.error('SDK do Firebase não carregou.');
+            }
+        } catch (e) {
+            window.__FB = { app: false, db: null, auth: null };
+            console.error('Falha ao iniciar Firebase:', e);
+        }
+    })();
     </script>
 
     <style>
@@ -2158,16 +2162,6 @@
                 </div>
                 <button class="login-btn" onclick="Auth.register()" id="btn-register">Criar conta</button>
             </div>
-
-            <!-- Login com Google (vale para as duas abas) -->
-            <div style="margin-top:18px;">
-                <div class="biometric-divider">ou</div>
-                <button type="button" id="btn-google-login" onclick="FB.loginGoogle()"
-                    style="width:100%;display:flex;align-items:center;justify-content:center;gap:11px;background:#fff;color:#3c4043;border:1.5px solid #dadce0;padding:13px 16px;border-radius:12px;font-size:0.95rem;font-weight:600;cursor:pointer;transition:box-shadow .15s;">
-                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" style="width:20px;height:20px;">
-                    Entrar com Google
-                </button>
-            </div>
         </div>
         <p class="login-footer">Seus dados ficam salvos localmente no dispositivo.</p>
 
@@ -2190,7 +2184,6 @@
                 <span id="notif-badge" class="notif-badge" style="display:none;"></span>
             </div>
             <button class="dark-toggle" id="dark-toggle-btn" onclick="UI.toggleDarkMode()" title="Alternar tema"><i class="fas fa-moon"></i></button>
-            <button type="button" id="fb-pill" onclick="FB.syncNow()" title="Sincronização em nuvem" style="display:none;align-items:center;gap:6px;font-size:0.72rem;font-weight:600;background:rgba(46,139,87,.15);color:#2e8b57;border:none;padding:6px 10px;border-radius:20px;cursor:pointer;"><i class="fas fa-cloud"></i><span id="fb-pill-label">Nuvem</span></button>
             <button class="icon-btn" onclick="FinanceApp.backup.exportData()"><i class="fas fa-cloud-download-alt"></i></button>
             <button class="icon-btn" onclick="Recibo.abrir()" title="Gerar recibo"><i class="fas fa-receipt"></i></button>
             <button class="icon-btn" onclick="UI.openSettings()"><i class="fas fa-cog"></i></button>
@@ -5081,440 +5074,6 @@
                 }
             }
         };
-
-        // ═══════════════════════════════════════════════════════════════
-        //  FB — Firebase (Login Google + Firestore em tempo real)
-        //  Documento por usuário: coleção "usuarios", id = uid.
-        //  Sincroniza o snapshot completo (DB.exportAllData) como string.
-        // ═══════════════════════════════════════════════════════════════
-        const FB = {
-            user: null,
-            _localUser: null,
-            _unsub: null,
-            _timer: null,
-            _lastPush: null,
-            _applying: false,
-            _hooksInstalled: false,
-
-            init() {
-                const begin = () => {
-                    this._installHooks();
-                    if (!window._firebase) { this._disableBtn(); return; }
-                    const { auth, onAuthStateChanged } = window._firebase;
-                    onAuthStateChanged(auth, async (user) => {
-                        if (user) {
-                            if (!window._fbUser || window._fbUser.uid !== user.uid) {
-                                try { await this.onLogin(user); } catch (e) { console.error(e); }
-                            }
-                        }
-                    });
-                };
-                if (window._firebase) begin();
-                else {
-                    document.addEventListener('firebase-ready', begin, { once: true });
-                    setTimeout(() => { if (!window._firebase) this._disableBtn(); }, 6000);
-                }
-            },
-
-            _disableBtn() {
-                const b = document.getElementById('btn-google-login');
-                if (b) { b.disabled = true; b.style.opacity = .55; b.title = 'Firebase indisponível (verifique a conexão)'; }
-            },
-
-            _usernameFor(user) {
-                return ('google_' + (user.email || user.uid)).toLowerCase().replace(/[^a-z0-9_@.\-]/g, '_');
-            },
-
-            async loginGoogle() {
-                if (!window._firebase) { alert('Firebase ainda está carregando. Tente novamente em instantes.'); return; }
-                try {
-                    const { auth, provider, signInWithPopup } = window._firebase;
-                    await signInWithPopup(auth, provider);
-                } catch (e) {
-                    console.error(e);
-                    if (Auth.showError) Auth.showError('Erro ao entrar com Google: ' + (e.code || e.message));
-                    else alert('Erro ao entrar com Google: ' + e.message);
-                }
-            },
-
-            async logout() {
-                if (!confirm('Sair da conta Google? Seus dados continuam salvos na nuvem.')) return;
-                try { clearTimeout(this._timer); await this._pushNow(); } catch (e) {}
-                try { if (this._unsub) { this._unsub(); this._unsub = null; } } catch (e) {}
-                try { const { auth, signOut } = window._firebase; await signOut(auth); } catch (e) {}
-                window._fbUser = null;
-                location.reload();
-            },
-
-            async onLogin(user) {
-                this.user = user;
-                window._fbUser = user;
-                this._showPill(true);
-                this.setStatus('syncing', 'Conectando…');
-                this._applying = true;
-                try {
-                    await this._resolveAndEnter(user);
-                } catch (e) {
-                    console.error(e);
-                    this.setStatus('err', 'Erro de conexão');
-                } finally {
-                    this._applying = false;
-                }
-                this._subscribe();
-            },
-
-            // Decide a qual conta local a identidade Google está vinculada,
-            // entra no app sob ela e sincroniza (por usuário, comprimido).
-            async _resolveAndEnter(user) {
-                const { db, doc, getDoc } = window._firebase;
-                let remote = null;
-                try {
-                    const snap = await getDoc(doc(db, 'usuarios', user.uid));
-                    if (snap.exists()) remote = snap.data();
-                } catch (e) { console.error(e); }
-
-                // Lê (e descomprime) o que houver na nuvem
-                let cloudDump = null, cloudCount = 0;
-                if (remote && remote.payload) {
-                    try {
-                        const json = remote.enc === 'gzip' ? await this._gunzip(remote.payload) : remote.payload;
-                        cloudDump = JSON.parse(json);
-                        // Só confiamos no formato novo (com escopo). Documentos antigos são descartados em favor do local.
-                        if (!cloudDump || cloudDump.version !== 'fp-scoped-1') { cloudDump = null; cloudCount = 0; }
-                        else cloudCount = this._countTxDump(cloudDump, remote.linkedUser || cloudDump.scopedUser || '');
-                    } catch (e) { console.error('Falha ao ler nuvem:', e); cloudDump = null; cloudCount = 0; }
-                }
-
-                // Conta local que mais tem dados (resgata seu backup importado)
-                const best = await this._bestLocalAccount();
-
-                // Escolhe o usuário de trabalho
-                let username = null;
-                if (remote && remote.linkedUser && cloudCount > 0) {
-                    username = remote.linkedUser;               // nuvem com dados manda
-                } else if (best.user && best.count > 0) {
-                    username = best.user.username;              // conta local com dados
-                } else {
-                    username = (remote && remote.linkedUser) || (best.user && best.user.username) || null;
-                    if (!username) {
-                        const users = (await DB.getAllUsers().catch(() => [])) || [];
-                        const cands = users.filter(u => u && u.username && !u.google);
-                        if (cands.length === 1) username = cands[0].username;
-                        else if (cands.length > 1) username = await this._chooseLinkAccount(cands);
-                    }
-                }
-                if (!username) {
-                    username = this._usernameFor(user);
-                    const rec = { username, name: user.displayName || user.email || 'Conta Google', passwordHash: '', google: true, createdAt: new Date().toISOString() };
-                    try { if (!(await DB.getUser(username).catch(() => null))) await DB.saveUser(rec); } catch (e) {}
-                }
-
-                this._linkedUser = username;
-                localStorage.setItem('fp_fb_link_' + user.uid, username);
-
-                let local = await DB.getUser(username).catch(() => null)
-                    || { username, name: user.displayName || username };
-                this._localUser = local; Auth.currentUser = local;
-                await Auth.enterApp(local);
-
-                const localCount = await this._localTxCount(username);
-                const localStamp = localStorage.getItem('fp_fb_stamp') || '';
-                const cloudNewer = remote && remote.updatedAt && remote.updatedAt > localStamp;
-
-                if (cloudDump && cloudCount > 0 && (localCount === 0 || (cloudNewer && cloudCount >= localCount))) {
-                    // Nuvem é a fonte de verdade → baixa
-                    await this._scopedImport(cloudDump);
-                    localStorage.setItem('fp_fb_stamp', remote.updatedAt || new Date().toISOString());
-                    await this._refreshApp();
-                    this.setStatus('on', 'Sincronizado');
-                    if (window.Utils && Utils.toast) Utils.toast('☁️ Dados carregados da nuvem');
-                } else {
-                    // Local é a fonte de verdade → envia (corrige nuvem vazia/antiga)
-                    await this._pushNow();
-                    if (best.user && window.Utils && Utils.toast && cloudCount === 0)
-                        Utils.toast('🔗 Conta Google vinculada a "' + (local.name || username) + '" e enviada à nuvem');
-                }
-            },
-
-            // Modal simples para escolher a conta local ao vincular o Google
-            _chooseLinkAccount(candidates) {
-                return new Promise((resolve) => {
-                    const ov = document.createElement('div');
-                    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:20px;';
-                    const items = candidates.map((u, i) =>
-                        `<button data-u="${i}" style="width:100%;display:flex;align-items:center;gap:12px;padding:13px 14px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;cursor:pointer;text-align:left;margin-bottom:8px;">
-                            <span style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;flex-shrink:0;">${(u.name || u.username).charAt(0).toUpperCase()}</span>
-                            <span style="flex:1;min-width:0;"><span style="display:block;font-weight:700;color:#0f172a;">${(u.name || u.username)}</span><span style="display:block;font-size:.78rem;color:#64748b;">@${u.username}</span></span>
-                        </button>`).join('');
-                    ov.innerHTML =
-                        `<div style="background:#fff;border-radius:18px;padding:22px;max-width:380px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);">
-                            <h3 style="margin:0 0 6px;font-size:1.05rem;color:#0f172a;">Vincular conta Google</h3>
-                            <p style="margin:0 0 16px;font-size:.85rem;color:#64748b;">Escolha quais dados desta máquina passarão a sincronizar com sua conta Google:</p>
-                            <div id="fb-link-list">${items}</div>
-                            <button id="fb-link-new" style="width:100%;padding:12px;margin-top:6px;background:#fff;border:1.5px dashed #cbd5e1;border-radius:12px;color:#475569;font-weight:600;cursor:pointer;">Começar com conta nova (vazia)</button>
-                        </div>`;
-                    document.body.appendChild(ov);
-                    ov.querySelectorAll('button[data-u]').forEach(btn => {
-                        btn.addEventListener('click', () => {
-                            const idx = parseInt(btn.getAttribute('data-u'), 10);
-                            document.body.removeChild(ov);
-                            resolve(candidates[idx].username);
-                        });
-                    });
-                    ov.querySelector('#fb-link-new').addEventListener('click', () => {
-                        document.body.removeChild(ov);
-                        resolve(null);
-                    });
-                });
-            },
-
-            _subscribe() {
-                const { db, doc, onSnapshot } = window._firebase;
-                if (this._unsub) { try { this._unsub(); } catch (e) {} }
-                this._unsub = onSnapshot(doc(db, 'usuarios', this.user.uid), async (snap) => {
-                    if (!snap.exists()) return;
-                    const remote = snap.data();
-                    if (remote.updatedAt && remote.updatedAt === this._lastPush) return; // eco da própria gravação
-                    const localStamp = localStorage.getItem('fp_fb_stamp') || '';
-                    if (remote.updatedAt && remote.updatedAt > localStamp) {
-                        await this._applyRemote(remote);
-                        this.setStatus('on', 'Atualizado');
-                        if (window.Utils && Utils.toast) Utils.toast('☁️ Dados atualizados de outro dispositivo');
-                    }
-                }, (err) => { console.error(err); this.setStatus('err', 'Erro de conexão'); });
-            },
-
-            async _applyRemote(remote) {
-                if (!remote || !remote.payload) return;
-                this._applying = true;
-                try {
-                    const json = remote.enc === 'gzip' ? await this._gunzip(remote.payload) : remote.payload;
-                    const dump = JSON.parse(json);
-                    const username = remote.linkedUser || (dump && dump.scopedUser) || (this._localUser && this._localUser.username);
-                    if (username) {
-                        this._linkedUser = username;
-                        const lu = await DB.getUser(username).catch(() => null) || { username, name: username };
-                        this._localUser = lu; Auth.currentUser = lu;
-                        if (this.user) localStorage.setItem('fp_fb_link_' + this.user.uid, username);
-                    }
-                    await this._scopedImport(dump);
-                    localStorage.setItem('fp_fb_stamp', remote.updatedAt || new Date().toISOString());
-                    await this._refreshApp();
-                } catch (e) {
-                    console.error('Falha ao aplicar dados da nuvem:', e);
-                }
-                this._applying = false;
-            },
-
-            async _refreshApp() {
-                try {
-                    if (this._localUser) { try { await DB.initForUser(this._localUser.username); } catch (e) {} }
-                    if (UI && UI.loadInitialData) await UI.loadInitialData();
-                    if (UI && UI.updateMonthDisplay) UI.updateMonthDisplay();
-                    if (UI && UI.updateTransactionMonthDisplay) UI.updateTransactionMonthDisplay();
-                    if (UI && UI.renderDashboard) UI.renderDashboard();
-                } catch (e) { console.error(e); }
-            },
-
-            scheduleSync() {
-                if (!window._fbUser || this._applying) return;
-                clearTimeout(this._timer);
-                this.setStatus('syncing', 'Salvando…');
-                this._timer = setTimeout(() => { this._pushNow(); }, 1200);
-            },
-
-            syncNow() {
-                if (!window._fbUser) return;
-                clearTimeout(this._timer);
-                this._pushNow();
-            },
-
-            async _pushNow() {
-                if (!window._fbUser || !window._firebase) return;
-                const { db, doc, setDoc } = window._firebase;
-                const username = this._linkedUser || (this._localUser && this._localUser.username);
-                if (!username) return;
-                this.setStatus('syncing', 'Salvando…');
-                try {
-                    const json = JSON.stringify(await this._scopedExport(username));
-                    let payload = json, enc = 'plain';
-                    try { const gz = await this._gzip(json); if (gz) { payload = gz; enc = 'gzip'; } } catch (e) {}
-                    if (payload.length > 1000000) {
-                        this.setStatus('err', 'Dados > 1 MB');
-                        if (window.Utils && Utils.toast) Utils.toast('⚠️ Mesmo compactados, seus dados passaram de 1 MB. A nuvem não foi atualizada.');
-                        return;
-                    }
-                    const stamp = new Date().toISOString();
-                    this._lastPush = stamp;
-                    await setDoc(doc(db, 'usuarios', this.user.uid), { updatedAt: stamp, linkedUser: username, enc, size: payload.length, app: 'FinancaPro', payload });
-                    localStorage.setItem('fp_fb_stamp', stamp);
-                    this.setStatus('on', 'Salvo ✓');
-                } catch (e) {
-                    console.error(e);
-                    this.setStatus('err', 'Erro ao salvar');
-                }
-            },
-
-            // ── Export/Import com escopo apenas no usuário vinculado ──
-            async _scopedExport(username) {
-                const dump = { version: 'fp-scoped-1', exportDate: new Date().toISOString(), scopedUser: username, userRecord: null, databases: {}, localStorage: {} };
-                try { dump.userRecord = await DB.getUser(username); } catch (e) {}
-                const names = ['FinancaProDB_' + username];
-                try {
-                    const perfis = JSON.parse(localStorage.getItem('fp_perfis_' + username) || '[]');
-                    perfis.forEach(p => { if (p && p.id) names.push('FinancaProDB_' + username + '_empresa_' + p.id); });
-                } catch (e) {}
-                for (const n of names) { try { const d = await DB._dumpDatabase(n); if (d) dump.databases[n] = d; } catch (e) {} }
-                const suf = '_' + username;
-                for (let i = 0; i < localStorage.length; i++) {
-                    const k = localStorage.key(i);
-                    if (!k || k.indexOf('fp_') !== 0) continue;
-                    if (k === 'fp_fb_stamp' || k.indexOf('fp_fb_link_') === 0) continue;
-                    if (k === 'fp_dark_mode' || k === 'fp_saldos_ocultos' || k.endsWith(suf)) {
-                        dump.localStorage[k] = localStorage.getItem(k);
-                    }
-                }
-                return dump;
-            },
-
-            async _scopedImport(dump) {
-                if (!dump) return;
-                if (dump.userRecord) { try { await DB.saveUser(dump.userRecord); } catch (e) {} }
-                if (dump.databases) {
-                    for (const [n, dd] of Object.entries(dump.databases)) {
-                        if (!n || n.indexOf('FinancaProDB') !== 0) continue;
-                        try { await DB._restoreDatabase(n, dd); } catch (e) { console.warn('restore', n, e); }
-                    }
-                }
-                if (dump.localStorage) {
-                    for (const [k, v] of Object.entries(dump.localStorage)) {
-                        if (v != null) { try { localStorage.setItem(k, v); } catch (e) {} }
-                    }
-                }
-            },
-
-            _countTxDump(dump, username) {
-                if (!dump || !dump.databases) return 0;
-                let n = 0;
-                for (const [name, dd] of Object.entries(dump.databases)) {
-                    if (name === 'FinancaProDB_' + username || name.indexOf('FinancaProDB_' + username + '_empresa_') === 0) {
-                        const t = dd && dd.stores && dd.stores.transactions;
-                        if (Array.isArray(t)) n += t.length;
-                    } else {
-                        const t = dd && dd.stores && dd.stores.transactions; // fallback: conta qualquer
-                        if (Array.isArray(t)) n += t.length;
-                    }
-                }
-                return n;
-            },
-
-            async _localTxCount(username) {
-                let n = 0;
-                try { const d = await DB._dumpDatabase('FinancaProDB_' + username); n += ((d && d.stores && d.stores.transactions) || []).length; } catch (e) {}
-                try {
-                    const perfis = JSON.parse(localStorage.getItem('fp_perfis_' + username) || '[]');
-                    for (const p of perfis) { try { const dd = await DB._dumpDatabase('FinancaProDB_' + username + '_empresa_' + p.id); n += ((dd && dd.stores && dd.stores.transactions) || []).length; } catch (e) {} }
-                } catch (e) {}
-                return n;
-            },
-
-            async _bestLocalAccount() {
-                const users = (await DB.getAllUsers().catch(() => [])) || [];
-                let best = null, bestN = -1;
-                for (const u of users) {
-                    if (!u || !u.username) continue;
-                    const n = await this._localTxCount(u.username);
-                    if (n > bestN) { bestN = n; best = u; }
-                }
-                return { user: best, count: bestN < 0 ? 0 : bestN };
-            },
-
-            // ── Compressão (gzip) para caber no limite do Firestore ──
-            _ab2b64(buf) {
-                const b = new Uint8Array(buf); let bin = ''; const CH = 0x8000;
-                for (let i = 0; i < b.length; i += CH) bin += String.fromCharCode.apply(null, b.subarray(i, i + CH));
-                return btoa(bin);
-            },
-            _b642u8(b64) {
-                const bin = atob(b64); const len = bin.length; const u = new Uint8Array(len);
-                for (let i = 0; i < len; i++) u[i] = bin.charCodeAt(i);
-                return u;
-            },
-            async _gzip(str) {
-                if (typeof CompressionStream === 'undefined') return null;
-                const cs = new CompressionStream('gzip');
-                const stream = new Blob([str]).stream().pipeThrough(cs);
-                const buf = await new Response(stream).arrayBuffer();
-                return this._ab2b64(buf);
-            },
-            async _gunzip(b64) {
-                if (typeof DecompressionStream === 'undefined') throw new Error('DecompressionStream indisponível');
-                const u = this._b642u8(b64);
-                const ds = new DecompressionStream('gzip');
-                const stream = new Blob([u]).stream().pipeThrough(ds);
-                return await new Response(stream).text();
-            },
-
-            _showPill(show) {
-                const p = document.getElementById('fb-pill');
-                if (p) p.style.display = show ? 'inline-flex' : 'none';
-            },
-
-            setStatus(state, label) {
-                const p = document.getElementById('fb-pill');
-                const lbl = document.getElementById('fb-pill-label');
-                const ic = p ? p.querySelector('i') : null;
-                if (lbl) lbl.textContent = label || 'Nuvem';
-                if (p) {
-                    const colors = { on: ['#2e8b57', 'rgba(46,139,87,.15)'], syncing: ['#3a6ea5', 'rgba(58,110,165,.15)'], err: ['#c0392b', 'rgba(192,57,43,.15)'] };
-                    const c = colors[state] || colors.on;
-                    p.style.color = c[0]; p.style.background = c[1];
-                }
-                if (ic) ic.className = state === 'err' ? 'fas fa-cloud-exclamation' : state === 'syncing' ? 'fas fa-cloud-arrow-up fa-spin' : 'fas fa-cloud';
-            },
-
-            // Intercepta gravações para disparar a sincronização automática
-            _installHooks() {
-                if (this._hooksInstalled) return;
-                this._hooksInstalled = true;
-
-                const self = this;
-                const dbMethods = ['saveTransaction', 'deleteTransaction', 'deleteTransactionsFrom',
-                    'saveAccount', 'deleteAccount', 'saveCategory', 'deleteCategory',
-                    'saveGoal', 'deleteGoal', 'saveSettings', 'clearAllData', 'saveUser'];
-                dbMethods.forEach(m => {
-                    const orig = DB[m];
-                    if (typeof orig !== 'function') return;
-                    DB[m] = async function (...args) {
-                        const r = await orig.apply(DB, args);
-                        if (window._fbUser && !self._applying) self.scheduleSync();
-                        return r;
-                    };
-                });
-
-                // Cartões e preferências usam localStorage (chaves fp_*)
-                try {
-                    const _set = localStorage.setItem.bind(localStorage);
-                    localStorage.setItem = function (k, v) {
-                        _set(k, v);
-                        try {
-                            if (window._fbUser && !self._applying && typeof k === 'string'
-                                && k.indexOf('fp_') === 0 && k !== 'fp_fb_stamp') {
-                                self.scheduleSync();
-                            }
-                        } catch (e) {}
-                    };
-                } catch (e) { /* alguns navegadores podem bloquear; segue sem o hook de localStorage */ }
-
-                // Logout: se for conta Google, encerra a sessão do Firebase
-                const _origLogout = Auth.logout;
-                Auth.logout = function () {
-                    if (window._fbUser) { FB.logout(); return; }
-                    return _origLogout.apply(Auth, arguments);
-                };
-            },
-        };
-        window.FB = FB;
 
         // ═══════════════════════════════════════════════════════════════
         //  FACE AUTH — Reconhecimento facial com face-api.js
@@ -9639,7 +9198,6 @@
                         Auth._refreshBiometricUI();
                     }
                 } catch(e) {}
-                try { FB.init(); } catch(e) { console.error(e); }
             },
             
             changeMonth: (direction) => {
@@ -15623,21 +15181,36 @@ const _waitEmpresa = setInterval(() => {
         const PlusDB = {
             db: null, user: null,
             open(username) {
+                const dbName = 'FinancaProDB_' + username + '_plus';
+                const ensureStores = (db) => {
+                    STORES.forEach(s => { if (!db.objectStoreNames.contains(s)) {
+                        const os = db.createObjectStore(s, { keyPath: 'id' });
+                        if (s === 'attachments') os.createIndex('txnId', 'txnId', { unique: false });
+                        if (s === 'snapshots') os.createIndex('ym', 'ym', { unique: false });
+                    }});
+                };
+                const missing = (db) => STORES.some(s => !db.objectStoreNames.contains(s));
                 return new Promise((resolve, reject) => {
                     if (PlusDB.db && PlusDB.user === username) return resolve();
                     if (PlusDB.db) { try { PlusDB.db.close(); } catch (e) {} PlusDB.db = null; }
                     PlusDB.user = username;
-                    const req = indexedDB.open('FinancaProDB_' + username + '_plus', 1);
-                    req.onupgradeneeded = (e) => {
-                        const db = e.target.result;
-                        STORES.forEach(s => { if (!db.objectStoreNames.contains(s)) {
-                            const os = db.createObjectStore(s, { keyPath: 'id' });
-                            if (s === 'attachments') os.createIndex('txnId', 'txnId', { unique: false });
-                            if (s === 'snapshots') os.createIndex('ym', 'ym', { unique: false });
-                        }});
-                    };
-                    req.onsuccess = () => { PlusDB.db = req.result; resolve(); };
+                    // Abre SEM fixar versão: adota a versão já existente no aparelho (qualquer que seja)
+                    // ou cria o banco na v1 se for novo. Evita o erro "requested version < existing version".
+                    const req = indexedDB.open(dbName);
+                    req.onupgradeneeded = (ev) => ensureStores(ev.target.result); // só dispara se o banco for novo
+                    req.onblocked = () => reject(new Error('Feche outras abas do app e tente de novo'));
                     req.onerror = () => reject(req.error);
+                    req.onsuccess = () => {
+                        const db = req.result;
+                        if (!missing(db)) { PlusDB.db = db; return resolve(); }
+                        // Falta algum store: sobe a versão só para poder criá-lo.
+                        const nextV = db.version + 1; db.close();
+                        const up = indexedDB.open(dbName, nextV);
+                        up.onupgradeneeded = (ev) => ensureStores(ev.target.result);
+                        up.onblocked = () => reject(new Error('Feche outras abas do app e tente de novo'));
+                        up.onerror = () => reject(up.error);
+                        up.onsuccess = () => { PlusDB.db = up.result; resolve(); };
+                    };
                 });
             },
             _op(store, mode, fn) {
@@ -16707,51 +16280,131 @@ const _waitEmpresa = setInterval(() => {
 
 
     <script>
-    /* ===== FinançaPro+ — Sincronização na nuvem (GitHub Gist) ===== */
+    /* ===== FinançaPro+ — Sincronização na nuvem em TEMPO REAL (Firebase / Firestore) ===== */
     (function () {
         'use strict';
         const core = window.FinPlus; if (!core) { console.error('FinPlus core ausente (sync)'); return; }
         const H = core._h, PlusDB = core.PlusDB;
         const { fmt, today, uid, toast, esc, $, txns, accounts, categories, D, panelHead, setPanel } = H;
 
-        const FILE = 'financapro-sync.json';
-        const DESC = 'FinançaPro — sincronização (não editar manualmente)';
+        const COL = 'financapro_vaults';                    // coleção raiz no Firestore
         const SYNC_STORES = ['debts', 'investments', 'subscriptions', 'snapshots', 'rules', 'txnmeta', 'kv'];
         // 'attachments' (Blobs) ficam só no aparelho — não entram no snapshot.
 
+        /* ---- segurança / capacidade ---- */
+        const KDF_ITER  = 210000;          // PBKDF2-SHA256 (derivação da chave a partir da frase-senha)
+        const CHUNK     = 700000;          // tamanho de cada pedaço (abaixo do limite de 1MB por documento do Firestore)
+        const partName  = (i) => 'p' + String(i).padStart(3, '0');
+
+        const te = new TextEncoder(), tdc = new TextDecoder();
+        const b64 = {
+            enc: (buf) => { const b = new Uint8Array(buf); let s = ''; const CH = 0x8000;
+                for (let i = 0; i < b.length; i += CH) s += String.fromCharCode.apply(null, b.subarray(i, i + CH)); return btoa(s); },
+            dec: (str) => Uint8Array.from(atob(str), c => c.charCodeAt(0))
+        };
+        async function deriveKey(pass, salt, iter) {
+            const base = await crypto.subtle.importKey('raw', te.encode(pass), 'PBKDF2', false, ['deriveKey']);
+            return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' },
+                base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+        }
+        async function gzipBytes(u8) {
+            if (typeof CompressionStream === 'undefined') return { comp: 'none', data: u8 };
+            const st = new Blob([u8]).stream().pipeThrough(new CompressionStream('gzip'));
+            return { comp: 'gzip', data: new Uint8Array(await new Response(st).arrayBuffer()) };
+        }
+        async function gunzipBytes(u8, comp) {
+            if (comp !== 'gzip') return u8;
+            const st = new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'));
+            return new Uint8Array(await new Response(st).arrayBuffer());
+        }
+        // snapshot -> { manifest (metadados em texto puro), chunks[] (base64 do texto cifrado) }
+        async function seal(snapObj, pass) {
+            const z = await gzipBytes(te.encode(JSON.stringify(snapObj)));
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const iv   = crypto.getRandomValues(new Uint8Array(12));   // IV novo a cada envio (nunca reutilizar)
+            const key  = await deriveKey(pass, salt, KDF_ITER);
+            const ct   = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, z.data);
+            const body = b64.enc(ct);
+            const chunks = [];
+            for (let i = 0; i < body.length; i += CHUNK) chunks.push(body.slice(i, i + CHUNK));
+            return {
+                manifest: { v: 2, app: 'financapro', enc: 'AES-GCM', kdf: 'PBKDF2', kdfIter: KDF_ITER,
+                    comp: z.comp, salt: b64.enc(salt), iv: b64.enc(iv),
+                    updatedAt: snapObj.updatedAt, device: snapObj.device, chunks: chunks.length, bytes: body.length },
+                chunks
+            };
+        }
+        // manifesto + base64 do texto cifrado -> snapshot (objeto)
+        async function openVault(manifest, body, pass) {
+            const key = await deriveKey(pass, b64.dec(manifest.salt), manifest.kdfIter || KDF_ITER);
+            let pt;
+            try { pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64.dec(manifest.iv) }, key, b64.dec(body)); }
+            catch (e) { throw new Error('Frase-senha de sincronização incorreta'); }
+            return JSON.parse(tdc.decode(await gunzipBytes(new Uint8Array(pt), manifest.comp)));
+        }
+
         /* estado */
-        let TOKEN = null, gistId = null, enabled = false, DEVICE = null;
-        let lastPulledAt = null, lastPushedAt = null;
+        let PASS = null, syncCode = null, enabled = false, DEVICE = null;
+        let lastRev = 0, lastChunks = 0, myStamp = null;
         let applying = false, dirty = false, conflict = false, busy = false, patched = false;
         let pushTimer = null, lastUser = null, pulledForUser = null, statusText = 'Não configurado';
+        let unsub = null, authTried = false;
 
-        /* GitHub API */
-        function ghHeaders() { return { 'Authorization': 'Bearer ' + TOKEN, 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json' }; }
-        async function ghFind() {
-            const r = await fetch('https://api.github.com/gists?per_page=100', { headers: ghHeaders() });
-            if (!r.ok) throw new Error('GitHub ' + r.status + (r.status === 401 ? ' (token inválido)' : ''));
-            const arr = await r.json();
-            const g = arr.find(x => x.files && x.files[FILE]);
-            return g ? g.id : null;
+        /* ---- Firebase / Firestore ---- */
+        function FB() { return window.__FB || { db: null, auth: null }; }
+        function fdb() { const d = FB().db; if (!d) throw new Error('Firebase indisponível (recarregue a página)'); return d; }
+        async function ensureAuth() {
+            const a = FB().auth; if (!a) return;          // sem auth: depende das regras do Firestore
+            try {
+                if (a.currentUser) return;
+                await a.signInAnonymously();
+                authTried = true;
+            } catch (e) {
+                authTried = true;
+                console.warn('Login anônimo indisponível (seguindo sem auth):', e && e.message);
+            }
         }
-        async function ghCreate(content) {
-            const r = await fetch('https://api.github.com/gists', { method: 'POST', headers: ghHeaders(),
-                body: JSON.stringify({ description: DESC, public: false, files: { [FILE]: { content } } }) });
-            if (!r.ok) throw new Error('GitHub ' + r.status);
-            return (await r.json()).id;
+        function vaultRef() { return fdb().collection(COL).doc(syncCode); }
+        function partRef(i) { return vaultRef().collection('parts').doc(partName(i)); }
+
+        // Normaliza o código de sincronização para um ID válido de documento.
+        function normCode(s) {
+            s = (s || '').trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '');
+            return s;
         }
-        async function ghRead(id) {
-            const r = await fetch('https://api.github.com/gists/' + id, { headers: ghHeaders() });
-            if (!r.ok) throw new Error('GitHub ' + r.status);
-            const g = await r.json(); const f = g.files && g.files[FILE]; if (!f) return null;
-            if (f.truncated && f.raw_url) { const rr = await fetch(f.raw_url); return await rr.text(); }
-            return f.content;
+
+        // grava manifesto + pedaços de forma atômica (writeBatch)
+        async function fbWriteVault(manifest, chunks) {
+            await ensureAuth();
+            const ref = vaultRef();
+            const batch = fdb().batch();
+            const rev = (lastRev || 0) + 1;
+            const stamp = uid();
+            for (let i = 0; i < chunks.length; i++) batch.set(partRef(i), { data: chunks[i] });
+            for (let i = chunks.length; i < (lastChunks || 0); i++) batch.delete(partRef(i));   // remove pedaços que sobraram
+            batch.set(ref, { manifest, rev, device: DEVICE, stamp,
+                updatedAt: manifest.updatedAt, chunks: chunks.length, bytes: manifest.bytes });
+            await batch.commit();
+            lastRev = rev; myStamp = stamp; lastChunks = chunks.length;
+            await PlusDB.kvSet('sync_lastRev', lastRev);
+            await PlusDB.kvSet('sync_lastChunks', lastChunks);
+            await PlusDB.kvSet('sync_myStamp', myStamp);
         }
-        async function ghWrite(id, content) {
-            const r = await fetch('https://api.github.com/gists/' + id, { method: 'PATCH', headers: ghHeaders(),
-                body: JSON.stringify({ files: { [FILE]: { content } } }) });
-            if (!r.ok) throw new Error('GitHub ' + r.status);
-            return true;
+        // lê o documento do cofre (sem os pedaços)
+        async function fbReadVault() {
+            await ensureAuth();
+            const s = await vaultRef().get();
+            return s.exists ? s.data() : null;
+        }
+        // junta os pedaços de texto cifrado
+        async function fbReadParts(n) {
+            let body = '';
+            for (let i = 0; i < n; i++) {
+                const ps = await partRef(i).get();
+                if (!ps.exists) throw new Error('Pedaço ' + i + ' ausente na nuvem');
+                body += ps.data().data;
+            }
+            return body;
         }
 
         /* snapshot */
@@ -16805,60 +16458,104 @@ const _waitEmpresa = setInterval(() => {
 
         /* config persistida (em kv, chaves sync_*) */
         async function loadCfg() {
-            TOKEN = await PlusDB.kvGet('sync_token', null);
-            gistId = await PlusDB.kvGet('sync_gistId', null);
+            PASS = await PlusDB.kvGet('sync_pass', null);            // frase-senha do cofre (só neste aparelho)
+            syncCode = await PlusDB.kvGet('sync_code', null);
             enabled = await PlusDB.kvGet('sync_enabled', false);
-            lastPulledAt = await PlusDB.kvGet('sync_lastPulledAt', null);
-            lastPushedAt = await PlusDB.kvGet('sync_lastPushedAt', null);
+            lastRev = await PlusDB.kvGet('sync_lastRev', 0);
+            lastChunks = await PlusDB.kvGet('sync_lastChunks', 0);
+            myStamp = await PlusDB.kvGet('sync_myStamp', null);
             DEVICE = await PlusDB.kvGet('sync_device', null);
             if (!DEVICE) { DEVICE = uid(); await PlusDB.kvSet('sync_device', DEVICE); }
         }
 
-        /* operações */
+        /* garante que o banco local (PlusDB) esteja aberto — reabre se a conexão tiver fechado */
+        async function ensureDB() {
+            if (PlusDB.db) return;
+            const u = (typeof DB !== 'undefined' && DB.currentUsername) ? DB.currentUsername : PlusDB.user;
+            if (!u) throw new Error('Entre na sua conta antes de sincronizar');
+            try { await PlusDB.open(u); } catch (e) { throw new Error('Não foi possível abrir o banco local: ' + (e && e.message || e)); }
+            if (!PlusDB.db) throw new Error('Banco local indisponível');
+        }
+
+        /* grava o snapshot cifrado na nuvem */
+        async function sealAndWrite(snap) {
+            if (!PASS) throw new Error('Frase-senha ausente');
+            const { manifest, chunks } = await seal(snap, PASS);
+            await fbWriteVault(manifest, chunks);
+        }
+
+        /* aplica um documento de cofre vindo da nuvem */
+        async function applyVaultDoc(v) {
+            const m = v.manifest;
+            if (!m || !m.enc) throw new Error('Formato de sincronização desconhecido');
+            const body = await fbReadParts(v.chunks);
+            if (m.bytes && body.length !== m.bytes) throw new Error('Dados corrompidos na nuvem (tamanho)');
+            const snap = await openVault(m, body, PASS);
+            await applySnapshot(snap);
+        }
+
+        /* operações manuais */
         async function doPull(force) {
-            if (!enabled || !TOKEN || !gistId || applying || busy) return;
+            if (!enabled || !PASS || !syncCode || applying || busy) return;
             busy = true; setStatus('Verificando nuvem…'); render();
             try {
-                const txt = await ghRead(gistId);
-                if (txt) {
-                    const snap = JSON.parse(txt);
-                    const isNewer = force || !lastPulledAt || (snap.updatedAt && snap.updatedAt > lastPulledAt);
-                    const isOurs = snap.device === DEVICE && snap.updatedAt === lastPushedAt;
-                    if (isNewer && !isOurs) { await applySnapshot(snap); toast('Dados atualizados da nuvem'); }
-                    lastPulledAt = snap.updatedAt; await PlusDB.kvSet('sync_lastPulledAt', snap.updatedAt);
-                    conflict = false; setStatus('Sincronizado');
+                await ensureDB();
+                const v = await fbReadVault();
+                if (v && typeof v.rev === 'number') {
+                    const isMine = (v.stamp && v.stamp === myStamp);
+                    if (force || (!isMine && v.rev >= lastRev)) {
+                        if (!isMine) { await applyVaultDoc(v); toast('Dados atualizados da nuvem'); }
+                    }
+                    lastRev = Math.max(lastRev, v.rev); await PlusDB.kvSet('sync_lastRev', lastRev);
                 }
+                conflict = false; setStatus('Sincronizado');
             } catch (e) { console.warn(e); setStatus('Erro: ' + e.message); toast('Sincronização: ' + e.message, 'error'); }
             busy = false; render();
         }
-        async function doPush(forceOverwrite) {
-            if (!enabled || !TOKEN || !gistId || applying || busy) return;
+        async function doPush() {
+            if (!enabled || !PASS || !syncCode || applying || busy) return;
             busy = true; setStatus('Enviando…'); render();
             try {
-                if (!forceOverwrite) {
-                    const remoteTxt = await ghRead(gistId);
-                    if (remoteTxt) { const r = JSON.parse(remoteTxt);
-                        if (r.updatedAt && lastPulledAt && r.updatedAt > lastPulledAt && r.device !== DEVICE) {
-                            conflict = true; setStatus('Conflito detectado'); busy = false; render();
-                            toast('A nuvem tem alterações de outro aparelho. Resolva o conflito.', 'error'); return;
-                        }
-                    }
-                }
-                const snap = await buildSnapshot();
-                await ghWrite(gistId, JSON.stringify(snap));
-                lastPushedAt = snap.updatedAt; lastPulledAt = snap.updatedAt;
-                await PlusDB.kvSet('sync_lastPushedAt', snap.updatedAt); await PlusDB.kvSet('sync_lastPulledAt', snap.updatedAt);
+                await ensureDB();
+                await sealAndWrite(await buildSnapshot());
                 dirty = false; conflict = false; setStatus('Sincronizado');
             } catch (e) { console.warn(e); setStatus('Erro: ' + e.message); toast('Falha ao enviar: ' + e.message, 'error'); }
             busy = false; render();
         }
-        async function syncNow() { await doPull(false); if (!conflict) await doPush(false); }
+        async function syncNow() { await doPull(false); if (!conflict) await doPush(); }
+
+        /* listener em tempo real (Firestore onSnapshot) */
+        function startListener() {
+            stopListener();
+            if (!enabled || !syncCode) return;
+            try {
+                ensureAuth();
+                unsub = vaultRef().onSnapshot(async (snap) => {
+                    try {
+                        if (!snap.exists) return;
+                        const v = snap.data();
+                        if (!v || typeof v.rev !== 'number') return;
+                        const isMine = (v.stamp && v.stamp === myStamp);     // eco do nosso próprio envio
+                        if (isMine) { lastRev = Math.max(lastRev, v.rev); await PlusDB.kvSet('sync_lastRev', lastRev); return; }
+                        if (v.rev < lastRev) return;                         // mais antigo do que já temos
+                        if (busy || applying) return;                        // evita reentrância
+                        busy = true; setStatus('Recebendo atualização…'); render();
+                        await ensureDB();
+                        await applyVaultDoc(v);
+                        lastRev = v.rev; await PlusDB.kvSet('sync_lastRev', lastRev);
+                        setStatus('Sincronizado'); toast('Atualizado em tempo real');
+                        busy = false; render();
+                    } catch (e) { busy = false; console.warn(e); setStatus('Erro: ' + e.message); render(); }
+                }, (err) => { console.warn('listener', err); setStatus('Erro de conexão: ' + (err && err.message || err)); render(); });
+            } catch (e) { console.warn('Falha ao iniciar listener', e); }
+        }
+        function stopListener() { if (unsub) { try { unsub(); } catch (e) {} unsub = null; } }
 
         /* dirty + auto-push */
         function markDirty() {
             if (!enabled || applying) return;
             dirty = true; setStatus('Alterações pendentes…'); updateCardSub();
-            clearTimeout(pushTimer); pushTimer = setTimeout(() => doPush(false), 5000);
+            clearTimeout(pushTimer); pushTimer = setTimeout(() => doPush(), 1500);
         }
         function patchDataLayer() {
             if (patched) return; patched = true;
@@ -16874,80 +16571,97 @@ const _waitEmpresa = setInterval(() => {
         }
 
         /* conectar / desconectar */
-        async function connect(token) {
-            if (!token) { toast('Cole o token', 'error'); return; }
+        async function connect(code, pass) {
+            code = normCode(code); pass = (pass || '').trim();
+            if (!code) { toast('Crie um código de sincronização (letras/números)', 'error'); return; }
+            if (pass.length < 8) { toast('Crie uma frase-senha com 8+ caracteres', 'error'); return; }
+            if (!FB().db) { toast('Firebase não carregou. Verifique a conexão e recarregue.', 'error'); return; }
             busy = true; setStatus('Conectando…'); render();
             try {
-                TOKEN = token.trim(); await PlusDB.kvSet('sync_token', TOKEN);
-                let id = await PlusDB.kvGet('sync_gistId', null);
-                if (!id) id = await ghFind();
-                let created = false;
-                if (!id) { const snap = await buildSnapshot(); id = await ghCreate(JSON.stringify(snap)); lastPushedAt = snap.updatedAt; lastPulledAt = snap.updatedAt; await PlusDB.kvSet('sync_lastPushedAt', snap.updatedAt); await PlusDB.kvSet('sync_lastPulledAt', snap.updatedAt); created = true; }
-                gistId = id; await PlusDB.kvSet('sync_gistId', id);
+                await ensureDB();
+                await loadCfg();                 // garante DEVICE carregado
+                await ensureAuth();
+                PASS = pass; syncCode = code;
+                await PlusDB.kvSet('sync_pass', PASS); await PlusDB.kvSet('sync_code', syncCode);
                 enabled = true; await PlusDB.kvSet('sync_enabled', true);
                 patchDataLayer();
-                busy = false;
-                if (!created) await doPull(true); // entrou numa sincronização existente: nuvem manda
-                setStatus('Sincronizado'); toast('Sincronização ativada'); render();
+
+                const v = await fbReadVault();
+                if (v && typeof v.rev === 'number' && v.manifest) {
+                    // cofre já existe na nuvem: a nuvem manda (decifra com a frase-senha)
+                    lastRev = 0;
+                    await applyVaultDoc(v);
+                    lastRev = v.rev; myStamp = v.stamp || null;
+                    await PlusDB.kvSet('sync_lastRev', lastRev);
+                    await PlusDB.kvSet('sync_lastChunks', v.chunks || 0);
+                    lastChunks = v.chunks || 0;
+                    toast('Conectado — dados carregados da nuvem');
+                } else {
+                    // primeiro aparelho: cria o cofre cifrado
+                    lastRev = 0; lastChunks = 0;
+                    await sealAndWrite(await buildSnapshot());
+                    toast('Sincronização em tempo real ativada');
+                }
+                startListener();
+                busy = false; setStatus('Sincronizado'); render();
             } catch (e) { busy = false; console.warn(e); setStatus('Erro: ' + e.message); toast('Falha: ' + e.message, 'error'); render(); }
         }
         async function disconnect() {
             enabled = false; await PlusDB.kvSet('sync_enabled', false);
-            setStatus('Desconectado'); toast('Sincronização desligada'); render();
+            stopListener();
+            setStatus('Desconectado'); toast('Sincronização pausada neste aparelho'); render();
         }
         async function forget() {
-            enabled = false;
-            for (const k of ['sync_token', 'sync_gistId', 'sync_enabled', 'sync_lastPulledAt', 'sync_lastPushedAt']) await PlusDB.del('kv', k).catch(() => {});
-            TOKEN = null; gistId = null; lastPulledAt = null; lastPushedAt = null;
+            enabled = false; stopListener();
+            for (const k of ['sync_pass', 'sync_code', 'sync_enabled', 'sync_lastRev', 'sync_lastChunks', 'sync_myStamp'])
+                await PlusDB.del('kv', k).catch(() => {});
+            PASS = null; syncCode = null; lastRev = 0; lastChunks = 0; myStamp = null;
             setStatus('Não configurado'); toast('Credenciais removidas deste aparelho'); render();
         }
 
         /* UI */
         function setStatus(s) { statusText = s; const e = $('sync-status'); if (e) e.textContent = s; updateCardSub(); }
-        function fmtWhen(iso) { if (!iso) return '—'; try { return new Date(iso).toLocaleString('pt-BR'); } catch (e) { return iso; } }
         function isOpen() { return !!$('sync-root'); }
         function render() { if (isOpen()) renderPanel(); }
         function updateCardSub() {
-            const sub = $('sync-card-sub'); if (sub) sub.textContent = !enabled ? 'Multi-dispositivo (desligada)' : conflict ? '⚠️ conflito' : dirty ? 'enviando…' : 'ativa · ' + (lastPushedAt ? fmtWhen(lastPushedAt).split(' ')[0] : 'ok');
-            const dot = $('sync-dot'); if (dot) dot.innerHTML = enabled ? (conflict ? '⚠️' : '🟢') : '';
+            const sub = $('sync-card-sub'); if (sub) sub.textContent = !enabled ? 'Tempo real (desligada)' : busy ? 'sincronizando…' : dirty ? 'enviando…' : 'ativa · tempo real';
+            const dot = $('sync-dot'); if (dot) dot.innerHTML = enabled ? '🟢' : '';
         }
 
         function renderPanel() {
             if (!enabled) {
-                setPanel(panelHead('Sincronização na nuvem', 'Seus dados em todos os aparelhos — sem servidor próprio') + `
+                setPanel(panelHead('Sincronização na nuvem', 'Seus dados em todos os aparelhos — em tempo real e criptografados') + `
                     <div id="sync-root">
-                    <div class="fp-box"><h4><i class="fas fa-cloud"></i> Como funciona</h4>
-                        <div class="fp-mini" style="line-height:1.6">Usa um <strong>Gist privado do GitHub</strong> como cofre dos seus dados (grátis e durável). O app envia e baixa um backup automaticamente, mantendo todos os aparelhos iguais. Funciona no celular também.</div></div>
+                    <div class="fp-box"><h4><i class="fas fa-bolt"></i> Como funciona</h4>
+                        <div class="fp-mini" style="line-height:1.6">Usa o <strong>Firebase (Firestore)</strong> como banco de dados em nuvem. As alterações aparecem <strong>na hora</strong> nos outros aparelhos (tempo real). Antes de sair do aparelho, seus dados são <strong>comprimidos</strong> e <strong>criptografados de ponta a ponta</strong> (AES-256) com uma <strong>frase-senha</strong> que só você conhece — a nuvem guarda apenas texto embaralhado.</div></div>
                     <div class="fp-box"><h4><i class="fas fa-list-ol"></i> Configurar (uma vez)</h4>
                         <div class="fp-mini" style="line-height:1.7">
-                        1. Tenha uma conta no <strong>github.com</strong> (grátis).<br>
-                        2. Abra <a href="https://github.com/settings/tokens/new?scopes=gist&description=FinancaPro" target="_blank" style="color:var(--primary);font-weight:700">este link</a> para gerar um <strong>token</strong> (o escopo <em>gist</em> já vem marcado). Defina validade e clique em <em>Generate token</em>.<br>
-                        3. Copie o token (começa com <code>ghp_</code>) e cole abaixo.<br>
-                        4. Nos <strong>outros aparelhos</strong>, cole o <strong>mesmo token</strong> — eles acham o cofre sozinhos.</div>
-                        <label class="fp-label">Token do GitHub</label>
-                        <input id="sync-token" class="fp-input" type="password" placeholder="ghp_...">
-                        <button class="fp-btn" style="margin-top:12px" onclick="FPxSync.connect(document.getElementById('sync-token').value)"><i class="fas fa-plug"></i> Conectar e sincronizar</button>
-                        <div class="fp-mini" style="margin-top:10px;color:var(--expense)"><i class="fas fa-triangle-exclamation"></i> Ao conectar este aparelho a uma sincronização que já existe, os dados da nuvem <strong>substituem</strong> os locais. Conecte primeiro o aparelho que tem os dados certos.</div>
-                        <div class="fp-mini"><i class="fas fa-shield-halved"></i> O token fica salvo só neste aparelho. Use o escopo apenas <em>gist</em> para limitar o acesso. Para revogar, exclua o token no GitHub.</div>
+                        1. Crie um <strong>código de sincronização</strong> (qualquer apelido só seu — ex.: <em>casa-joao-2024</em>). Ele identifica o seu cofre na nuvem.<br>
+                        2. Crie uma <strong>frase-senha</strong> forte — é ela que criptografa tudo.<br>
+                        3. Nos <strong>outros aparelhos</strong>, use o <strong>mesmo código</strong> e a <strong>mesma frase-senha</strong>.</div>
+                        <label class="fp-label">Código de sincronização</label>
+                        <input id="sync-code" class="fp-input" type="text" placeholder="ex.: casa-joao-2024" autocomplete="off" autocapitalize="off" spellcheck="false">
+                        <label class="fp-label" style="margin-top:10px">Frase-senha (criptografia)</label>
+                        <input id="sync-pass" class="fp-input" type="password" placeholder="mínimo 8 caracteres" autocomplete="new-password">
+                        <button class="fp-btn" style="margin-top:12px" onclick="FPxSync.connect(document.getElementById('sync-code').value, document.getElementById('sync-pass').value)"><i class="fas fa-bolt"></i> Conectar e sincronizar</button>
+                        <div class="fp-mini" style="margin-top:10px;color:var(--expense)"><i class="fas fa-triangle-exclamation"></i> <strong>Guarde a frase-senha.</strong> Sem ela é impossível recuperar os dados do cofre — não há como redefinir.</div>
+                        <div class="fp-mini" style="color:var(--expense)"><i class="fas fa-triangle-exclamation"></i> Ao conectar a um código que já existe, os dados da nuvem <strong>substituem</strong> os locais. Conecte primeiro o aparelho com os dados certos.</div>
+                        <div class="fp-mini"><i class="fas fa-shield-halved"></i> Código e frase-senha ficam salvos só neste aparelho.</div>
                     </div></div>`);
                 return;
             }
-            setPanel(panelHead('Sincronização na nuvem', 'Ativa via GitHub Gist') + `
+            setPanel(panelHead('Sincronização na nuvem', 'Ativa · tempo real · criptografada (AES-256)') + `
                 <div id="sync-root">
-                ${conflict ? `<div class="fp-box" style="border-color:var(--expense)"><h4 style="color:var(--expense)"><i class="fas fa-triangle-exclamation"></i> Conflito</h4>
-                    <div class="fp-mini">A nuvem foi alterada por outro aparelho depois da sua última sincronização. Escolha qual versão vale:</div>
-                    <button class="fp-btn" style="margin-top:10px" onclick="FPxSync.resolvePull()"><i class="fas fa-cloud-arrow-down"></i> Usar a da nuvem (descarta as deste aparelho)</button>
-                    <button class="fp-btn danger" style="margin-top:8px" onclick="FPxSync.resolvePush()"><i class="fas fa-cloud-arrow-up"></i> Usar a deste aparelho (sobrescreve a nuvem)</button></div>` : ''}
                 <div class="fp-box"><div class="fp-kpi">
                     <div><div class="k">Status</div><div class="v" id="sync-status" style="font-size:.95rem">${esc(statusText)}</div></div>
-                    <div><div class="k">Último envio</div><div class="v" style="font-size:.9rem">${fmtWhen(lastPushedAt)}</div></div></div>
+                    <div><div class="k">Código</div><div class="v" style="font-size:.9rem">${esc(syncCode || '—')}</div></div></div>
                     <button class="fp-btn" style="margin-top:12px" ${busy ? 'disabled' : ''} onclick="FPxSync.syncNow()"><i class="fas fa-arrows-rotate"></i> Sincronizar agora</button>
                     <div class="fp-row" style="margin-top:8px"><button class="fp-btn out" onclick="FPxSync.pull()"><i class="fas fa-cloud-arrow-down"></i> Baixar</button>
                     <button class="fp-btn out" onclick="FPxSync.push()"><i class="fas fa-cloud-arrow-up"></i> Enviar</button></div>
                 </div>
-                <div class="fp-box"><div class="fp-mini" style="line-height:1.6">Envio automático após alterações (poucos segundos) e baixa automática ao abrir o app ou voltar para ele. Resolução por “último a salvar vence” — evite editar dois aparelhos ao mesmo tempo sem sincronizar.</div>
+                <div class="fp-box"><div class="fp-mini" style="line-height:1.6">As alterações são enviadas automaticamente e chegam <strong>em tempo real</strong> nos outros aparelhos conectados ao mesmo código. Resolução por “último a salvar vence” — evite editar dois aparelhos exatamente ao mesmo tempo.</div>
                     <button class="fp-btn out" style="margin-top:10px" onclick="FPxSync.disconnect()"><i class="fas fa-pause"></i> Pausar neste aparelho</button>
-                    <button class="fp-btn out" style="margin-top:8px;color:var(--expense)" onclick="FPxSync.forget()"><i class="fas fa-trash"></i> Remover token deste aparelho</button>
+                    <button class="fp-btn out" style="margin-top:8px;color:var(--expense)" onclick="FPxSync.forget()"><i class="fas fa-trash"></i> Remover credenciais deste aparelho</button>
                 </div></div>`);
         }
 
@@ -16959,9 +16673,9 @@ const _waitEmpresa = setInterval(() => {
             const wrap = document.createElement('div');
             wrap.innerHTML = '<div class="fp-section-title">Nuvem</div><div class="fp-hub-grid">'
                 + '<button class="fp-card" id="sync-card" onclick="FinPlus.open(\'sync\')" aria-label="Sincronização na nuvem">'
-                + '<div class="fp-ic" style="background:#0ea5e9"><i class="fas fa-cloud"></i></div>'
+                + '<div class="fp-ic" style="background:#0ea5e9"><i class="fas fa-cloud-bolt"></i></div>'
                 + '<div class="fp-t">Sincronização <span id="sync-dot"></span></div>'
-                + '<div class="fp-d" id="sync-card-sub">Multi-dispositivo</div></button></div>';
+                + '<div class="fp-d" id="sync-card-sub">Tempo real</div></button></div>';
             const intro = v.firstElementChild;
             if (intro && intro.nextSibling) v.insertBefore(wrap, intro.nextSibling); else v.appendChild(wrap);
             updateCardSub();
@@ -16970,33 +16684,32 @@ const _waitEmpresa = setInterval(() => {
         /* handlers expostos */
         window.FPxSync = {
             connect, disconnect, forget, syncNow,
-            pull: () => doPull(false), push: () => doPush(false),
+            pull: () => doPull(false), push: () => doPush(),
             resolvePull: async () => { conflict = false; await doPull(true); },
-            resolvePush: async () => { conflict = false; await doPush(true); }
+            resolvePush: async () => { conflict = false; await doPush(); }
         };
         core._reg('sync', renderPanel);
 
         /* inicialização + automações */
         async function initForUser() {
             await loadCfg();
-            if (enabled && TOKEN && gistId) { patchDataLayer(); await doPull(true); }
-            else setStatus(enabled ? 'Configuração incompleta' : (TOKEN ? 'Pausada' : 'Não configurado'));
+            if (enabled && PASS && syncCode) { patchDataLayer(); await doPull(true); startListener(); }
+            else setStatus(enabled ? 'Configuração incompleta' : (syncCode ? 'Pausada' : 'Não configurado'));
         }
         setInterval(async () => {
             try {
                 const ready = (typeof DB !== 'undefined') && DB.currentUsername && $('login-screen') && $('login-screen').classList.contains('hidden') && PlusDB.db;
                 if (!ready) return;
-                if (DB.currentUsername !== lastUser) { lastUser = DB.currentUsername; enabled = false; conflict = false; dirty = false; }
+                if (DB.currentUsername !== lastUser) { lastUser = DB.currentUsername; enabled = false; conflict = false; dirty = false; stopListener(); }
                 if (pulledForUser !== lastUser && PlusDB.user === lastUser) { pulledForUser = lastUser; await initForUser(); }
             } catch (e) { /* silencioso */ }
         }, 1000);
 
         document.addEventListener('visibilitychange', () => {
             if (!enabled) return;
-            if (document.hidden) { if (dirty && !busy) doPush(false); }   // flush ao sair (melhor esforço)
-            else if (!busy) doPull(false);                                 // baixa ao voltar
+            if (document.hidden) { if (dirty && !busy) doPush(); }   // flush ao sair (melhor esforço)
+            else { if (!unsub) startListener(); if (!busy) doPull(false); }  // reativa o listener ao voltar
         });
-        setInterval(() => { if (enabled && !document.hidden && !busy && !dirty) doPull(false); }, 180000);
     })();
     </script>
 
@@ -17102,6 +16815,121 @@ const _waitEmpresa = setInterval(() => {
   window.updateHomeScreenIcon = updateHomeScreenIcon;
 })();
 </script>
+
+<!-- ============================================================
+     PROTEÇÃO DO CÓDIGO-FONTE / CONTEÚDO
+     Dissuasores no lado do cliente: bloqueio de toque longo,
+     menu de contexto, seleção, arraste, cópia e atalhos de
+     ferramentas do desenvolvedor. Campos de formulário continuam
+     totalmente utilizáveis (digitar, colar e selecionar dentro deles).
+     Observação: nenhuma proteção 100% é possível no navegador, pois
+     o HTML/JS é entregue ao cliente. Isto reduz a cópia casual.
+============================================================ -->
+<style id="fp-protect-style">
+    html, body {
+        -webkit-touch-callout: none;            /* iOS: sem menu ao toque longo */
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+    }
+    /* Reabilita seleção/colar onde o usuário realmente precisa */
+    input, textarea, select, [contenteditable="true"],
+    .selectable, .allow-select {
+        -webkit-touch-callout: default !important;
+        -webkit-user-select: text !important;
+        -moz-user-select: text !important;
+        -ms-user-select: text !important;
+        user-select: text !important;
+    }
+    /* Evita arrastar imagens para fora (logo, comprovantes, etc.) */
+    img, canvas, svg {
+        -webkit-user-drag: none;
+        user-drag: none;
+    }
+    /* Remove o realce azul de toque no mobile */
+    * { -webkit-tap-highlight-color: rgba(0,0,0,0); }
+</style>
+<script>
+(function () {
+    'use strict';
+    var ENABLED = true;   // FPProtect.disable() desliga em runtime, se precisar
+
+    // Elementos onde a interação normal deve continuar permitida
+    function inField(el) {
+        if (!el || !el.closest) {
+            var t = (el && el.tagName) || '';
+            return /^(INPUT|TEXTAREA|SELECT)$/.test(t);
+        }
+        return !!el.closest('input, textarea, select, [contenteditable="true"], .selectable, .allow-select');
+    }
+
+    // 1) Menu de contexto (clique direito + toque longo no Android)
+    document.addEventListener('contextmenu', function (e) {
+        if (!ENABLED) return;
+        if (inField(e.target)) return;     // permite menu de colar nos campos
+        e.preventDefault();
+    }, { capture: true });
+
+    // 2) Arraste (impede salvar/arrastar imagens)
+    document.addEventListener('dragstart', function (e) {
+        if (!ENABLED) return;
+        if (inField(e.target)) return;
+        e.preventDefault();
+    }, { capture: true });
+
+    // 3) Início de seleção fora dos campos
+    document.addEventListener('selectstart', function (e) {
+        if (!ENABLED) return;
+        if (inField(e.target)) return;
+        e.preventDefault();
+    }, { capture: true });
+
+    // 4) Copiar / recortar fora dos campos
+    ['copy', 'cut'].forEach(function (evt) {
+        document.addEventListener(evt, function (e) {
+            if (!ENABLED) return;
+            if (inField(e.target)) return;  // copiar/colar dentro dos campos é liberado
+            e.preventDefault();
+        }, { capture: true });
+    });
+
+    // 5) Atalhos de ferramentas do desenvolvedor / ver código-fonte / salvar
+    document.addEventListener('keydown', function (e) {
+        if (!ENABLED) return;
+        var k = (e.key || '').toLowerCase();
+        var ctrl = e.ctrlKey || e.metaKey;
+
+        // F12 — DevTools
+        if (e.key === 'F12') { e.preventDefault(); return false; }
+
+        // Ctrl/Cmd + Shift + I / J / C — Inspecionar / Console / Selecionar elemento
+        if (ctrl && e.shiftKey && (k === 'i' || k === 'j' || k === 'c')) {
+            e.preventDefault(); return false;
+        }
+        // Ctrl/Cmd + U — Ver código-fonte
+        if (ctrl && k === 'u') { e.preventDefault(); return false; }
+        // Ctrl/Cmd + S — Salvar página
+        if (ctrl && k === 's') { e.preventDefault(); return false; }
+    }, { capture: true });
+
+    // 6) Toque longo no iOS (gesto que abre o "callout") — cancela fora dos campos
+    var lpTimer = null;
+    document.addEventListener('touchstart', function (e) {
+        if (!ENABLED) return;
+        if (inField(e.target)) return;
+        // nada a fazer aqui além do CSS; mantido por compatibilidade
+    }, { passive: true, capture: true });
+
+    // API opcional para ligar/desligar
+    window.FPProtect = {
+        enable:  function () { ENABLED = true; },
+        disable: function () { ENABLED = false; },
+        get enabled() { return ENABLED; }
+    };
+})();
+</script>
+
 
 </body>
 </html>
